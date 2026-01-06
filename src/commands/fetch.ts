@@ -9,10 +9,46 @@ import {
 import { ensureGitignore } from "../lib/gitignore.js";
 import { ensureTsconfigExclude } from "../lib/tsconfig.js";
 import { updateAgentsMd } from "../lib/agents.js";
+import {
+  getFileModificationPermission,
+  setFileModificationPermission,
+} from "../lib/settings.js";
+import { confirm } from "../lib/prompt.js";
 import type { FetchResult } from "../types.js";
 
 export interface FetchOptions {
   cwd?: string;
+}
+
+/**
+ * Check if file modifications are allowed
+ * Uses settings.json as the single source of truth
+ */
+async function checkFileModificationPermission(cwd: string): Promise<boolean> {
+  // Check settings file for stored preference
+  const storedPermission = await getFileModificationPermission(cwd);
+  if (storedPermission !== undefined) {
+    return storedPermission;
+  }
+
+  // Prompt user for permission
+  console.log("\nopensrc can update the following files for better integration:");
+  console.log("  • .gitignore - add opensrc/ to ignore list");
+  console.log("  • tsconfig.json - exclude opensrc/ from compilation");
+  console.log("  • AGENTS.md - add source code reference section\n");
+
+  const allowed = await confirm("Allow opensrc to modify these files?");
+
+  // Save the preference to settings.json
+  await setFileModificationPermission(allowed, cwd);
+
+  if (allowed) {
+    console.log("✓ Permission granted - saved to opensrc/settings.json\n");
+  } else {
+    console.log("✗ Permission denied - saved to opensrc/settings.json\n");
+  }
+
+  return allowed;
 }
 
 /**
@@ -25,16 +61,21 @@ export async function fetchCommand(
   const cwd = options.cwd || process.cwd();
   const results: FetchResult[] = [];
 
-  // Ensure .gitignore has opensrc/ entry
-  const gitignoreUpdated = await ensureGitignore(cwd);
-  if (gitignoreUpdated) {
-    console.log("✓ Added opensrc/ to .gitignore");
-  }
+  // Check if we're allowed to modify files
+  const canModifyFiles = await checkFileModificationPermission(cwd);
 
-  // Ensure tsconfig.json excludes opensrc/
-  const tsconfigUpdated = await ensureTsconfigExclude(cwd);
-  if (tsconfigUpdated) {
-    console.log("✓ Added opensrc/ to tsconfig.json exclude");
+  if (canModifyFiles) {
+    // Ensure .gitignore has opensrc/ entry
+    const gitignoreUpdated = await ensureGitignore(cwd);
+    if (gitignoreUpdated) {
+      console.log("✓ Added opensrc/ to .gitignore");
+    }
+
+    // Ensure tsconfig.json excludes opensrc/
+    const tsconfigUpdated = await ensureTsconfigExclude(cwd);
+    if (tsconfigUpdated) {
+      console.log("✓ Added opensrc/ to tsconfig.json exclude");
+    }
   }
 
   for (const spec of packages) {
@@ -123,13 +164,18 @@ export async function fetchCommand(
 
   console.log(`\nDone: ${successful} succeeded, ${failed} failed`);
 
-  // Update AGENTS.md with all fetched sources
-  if (successful > 0) {
+  // Update AGENTS.md with all fetched sources (only if permission granted)
+  if (successful > 0 && canModifyFiles) {
     const allSources = await listSources(cwd);
     const agentsUpdated = await updateAgentsMd(allSources, cwd);
     if (agentsUpdated) {
       console.log("✓ Updated AGENTS.md");
     }
+  } else if (successful > 0 && !canModifyFiles) {
+    // Still update the sources.json index even without modifying AGENTS.md
+    const allSources = await listSources(cwd);
+    const { updatePackageIndex } = await import("../lib/agents.js");
+    await updatePackageIndex(allSources, cwd);
   }
 
   return results;
