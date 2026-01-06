@@ -2,6 +2,7 @@ import { parsePackageSpec, resolvePackage } from '../lib/registry.js';
 import { detectInstalledVersion } from '../lib/version.js';
 import { fetchSource, packageExists, listSources, readMetadata } from '../lib/git.js';
 import { ensureGitignore } from '../lib/gitignore.js';
+import { ensureTsconfigExclude } from '../lib/tsconfig.js';
 import { updateAgentsMd } from '../lib/agents.js';
 import type { FetchResult } from '../types.js';
 
@@ -23,6 +24,12 @@ export async function fetchCommand(
   const gitignoreUpdated = await ensureGitignore(cwd);
   if (gitignoreUpdated) {
     console.log('✓ Added opensrc/ to .gitignore');
+  }
+  
+  // Ensure tsconfig.json excludes opensrc/
+  const tsconfigUpdated = await ensureTsconfigExclude(cwd);
+  if (tsconfigUpdated) {
+    console.log('✓ Added opensrc/ to tsconfig.json exclude');
   }
   
   for (const spec of packages) {
