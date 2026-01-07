@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { existsSync } from "fs";
+import type { Ecosystem } from "../types.js";
 
 const AGENTS_FILE = "AGENTS.md";
 const OPENSRC_DIR = "opensrc";
@@ -23,6 +24,17 @@ See \`opensrc/sources.json\` for the list of available packages and their versio
 
 Use this source code when you need to understand how a package works internally, not just its types/interface.
 
+### Fetching Additional Source Code
+
+To fetch source code for a package or repository you need to understand, run:
+
+\`\`\`bash
+opensrc <package>           # npm package (e.g., opensrc zod)
+opensrc pypi:<package>      # Python package (e.g., opensrc pypi:requests)
+opensrc crates:<package>    # Rust crate (e.g., opensrc crates:serde)
+opensrc <owner>/<repo>      # GitHub repo (e.g., opensrc vercel/ai)
+\`\`\`
+
 ${SECTION_END_MARKER}
 `;
 
@@ -31,11 +43,12 @@ export interface SourceEntry {
   version: string;
   path: string;
   fetchedAt: string;
+  ecosystem?: Ecosystem;
 }
 
 export interface SourcesIndex {
   repos: SourceEntry[];
-  packages: SourceEntry[];
+  packages: Record<Ecosystem, SourceEntry[]>;
   updatedAt: string;
 }
 
@@ -44,7 +57,7 @@ export interface SourcesIndex {
  */
 export async function updatePackageIndex(
   sources: {
-    packages: SourceEntry[];
+    packages: Record<Ecosystem, SourceEntry[]>;
     repos: SourceEntry[];
   },
   cwd: string = process.cwd(),
@@ -52,7 +65,12 @@ export async function updatePackageIndex(
   const opensrcDir = join(cwd, OPENSRC_DIR);
   const sourcesPath = join(opensrcDir, SOURCES_FILE);
 
-  if (sources.packages.length === 0 && sources.repos.length === 0) {
+  const totalPackages = Object.values(sources.packages).reduce(
+    (sum, arr) => sum + arr.length,
+    0,
+  );
+
+  if (totalPackages === 0 && sources.repos.length === 0) {
     // Remove index file if no sources
     if (existsSync(sourcesPath)) {
       const { rm } = await import("fs/promises");
@@ -68,16 +86,53 @@ export async function updatePackageIndex(
       path: r.path,
       fetchedAt: r.fetchedAt,
     })),
-    packages: sources.packages.map((p) => ({
-      name: p.name,
-      version: p.version,
-      path: p.path,
-      fetchedAt: p.fetchedAt,
-    })),
+    packages: {
+      npm: sources.packages.npm.map((p) => ({
+        name: p.name,
+        version: p.version,
+        path: p.path,
+        fetchedAt: p.fetchedAt,
+      })),
+      pypi: sources.packages.pypi.map((p) => ({
+        name: p.name,
+        version: p.version,
+        path: p.path,
+        fetchedAt: p.fetchedAt,
+      })),
+      crates: sources.packages.crates.map((p) => ({
+        name: p.name,
+        version: p.version,
+        path: p.path,
+        fetchedAt: p.fetchedAt,
+      })),
+    },
     updatedAt: new Date().toISOString(),
   };
 
-  await writeFile(sourcesPath, JSON.stringify(index, null, 2), "utf-8");
+  // Remove empty ecosystem arrays from output for cleaner JSON
+  const cleanIndex: Record<string, unknown> = {
+    repos: index.repos,
+    packages: {} as Record<string, SourceEntry[]>,
+    updatedAt: index.updatedAt,
+  };
+
+  for (const [eco, packages] of Object.entries(index.packages)) {
+    if (packages.length > 0) {
+      (cleanIndex.packages as Record<string, SourceEntry[]>)[eco] = packages;
+    }
+  }
+
+  // If no packages at all, remove the packages key
+  if (Object.keys(cleanIndex.packages as object).length === 0) {
+    delete cleanIndex.packages;
+  }
+
+  // If no repos, remove the repos key
+  if ((cleanIndex.repos as SourceEntry[]).length === 0) {
+    delete cleanIndex.repos;
+  }
+
+  await writeFile(sourcesPath, JSON.stringify(cleanIndex, null, 2), "utf-8");
 }
 
 /**
@@ -140,7 +195,7 @@ Instructions for AI coding agents working with this codebase.
  */
 export async function updateAgentsMd(
   sources: {
-    packages: SourceEntry[];
+    packages: Record<Ecosystem, SourceEntry[]>;
     repos: SourceEntry[];
   },
   cwd: string = process.cwd(),
@@ -149,7 +204,12 @@ export async function updateAgentsMd(
   await updatePackageIndex(sources, cwd);
 
   // Only add section to AGENTS.md if there are sources and section doesn't exist
-  if (sources.packages.length > 0 || sources.repos.length > 0) {
+  const totalPackages = Object.values(sources.packages).reduce(
+    (sum, arr) => sum + arr.length,
+    0,
+  );
+
+  if (totalPackages > 0 || sources.repos.length > 0) {
     return ensureAgentsMd(cwd);
   }
 

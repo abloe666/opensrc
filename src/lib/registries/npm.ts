@@ -1,19 +1,11 @@
-import type { RegistryResponse, ResolvedPackage, InputType } from "../types.js";
-import { isRepoSpec } from "./repo.js";
+import type { RegistryResponse, ResolvedPackage } from "../../types.js";
 
 const NPM_REGISTRY = "https://registry.npmjs.org";
 
 /**
- * Detect whether the input is an npm package or a GitHub repo
+ * Parse an npm package specifier like "zod@3.22.0" into name and version
  */
-export function detectInputType(spec: string): InputType {
-  return isRepoSpec(spec) ? "repo" : "package";
-}
-
-/**
- * Parse a package specifier like "zod@3.22.0" into name and version
- */
-export function parsePackageSpec(spec: string): {
+export function parseNpmSpec(spec: string): {
   name: string;
   version?: string;
 } {
@@ -40,7 +32,7 @@ export function parsePackageSpec(spec: string): {
 /**
  * Fetch package metadata from npm registry
  */
-export async function fetchPackageInfo(
+export async function fetchNpmPackageInfo(
   packageName: string,
 ): Promise<RegistryResponse> {
   const url = `${NPM_REGISTRY}/${encodeURIComponent(packageName).replace("%40", "@")}`;
@@ -110,13 +102,13 @@ export function getLatestVersion(info: RegistryResponse): string {
 }
 
 /**
- * Resolve a package to its repository information
+ * Resolve an npm package to its repository information
  */
-export async function resolvePackage(
+export async function resolveNpmPackage(
   packageName: string,
   version?: string,
 ): Promise<ResolvedPackage> {
-  const info = await fetchPackageInfo(packageName);
+  const info = await fetchNpmPackageInfo(packageName);
 
   // If no version specified, use latest
   const resolvedVersion = version || getLatestVersion(info);
@@ -144,6 +136,7 @@ export async function resolvePackage(
   const gitTag = `v${resolvedVersion}`;
 
   return {
+    ecosystem: "npm",
     name: packageName,
     version: resolvedVersion,
     repoUrl: repo.url,
@@ -151,3 +144,4 @@ export async function resolvePackage(
     gitTag,
   };
 }
+

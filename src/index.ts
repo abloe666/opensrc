@@ -5,13 +5,14 @@ import { fetchCommand } from "./commands/fetch.js";
 import { listCommand } from "./commands/list.js";
 import { removeCommand } from "./commands/remove.js";
 import { cleanCommand } from "./commands/clean.js";
+import type { Ecosystem } from "./types.js";
 
 const program = new Command();
 
 program
   .name("opensrc")
   .description(
-    "Fetch source code for npm packages to give coding agents deeper context",
+    "Fetch source code for packages to give coding agents deeper context",
   )
   .version("0.1.0");
 
@@ -19,7 +20,7 @@ program
 program
   .argument(
     "[packages...]",
-    "packages or repos to fetch (e.g., zod, react@18.2.0, github:owner/repo, owner/repo)",
+    "packages or repos to fetch (e.g., zod, pypi:requests, crates:serde, owner/repo)",
   )
   .option("--cwd <path>", "working directory (default: current directory)")
   .option(
@@ -74,14 +75,31 @@ program
 program
   .command("clean")
   .description("Remove all fetched packages and/or repos")
-  .option("--packages", "only remove packages")
+  .option("--packages", "only remove packages (all ecosystems)")
   .option("--repos", "only remove repos")
+  .option("--npm", "only remove npm packages")
+  .option("--pypi", "only remove PyPI packages")
+  .option("--crates", "only remove crates.io packages")
   .option("--cwd <path>", "working directory (default: current directory)")
   .action(
-    async (options: { packages?: boolean; repos?: boolean; cwd?: string }) => {
+    async (options: {
+      packages?: boolean;
+      repos?: boolean;
+      npm?: boolean;
+      pypi?: boolean;
+      crates?: boolean;
+      cwd?: string;
+    }) => {
+      // Determine ecosystem from flags
+      let ecosystem: Ecosystem | undefined;
+      if (options.npm) ecosystem = "npm";
+      else if (options.pypi) ecosystem = "pypi";
+      else if (options.crates) ecosystem = "crates";
+
       await cleanCommand({
-        packages: options.packages,
+        packages: options.packages || !!ecosystem,
         repos: options.repos,
+        ecosystem,
         cwd: options.cwd,
       });
     },

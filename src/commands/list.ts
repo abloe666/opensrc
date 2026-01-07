@@ -1,9 +1,16 @@
 import { listSources } from "../lib/git.js";
+import type { Ecosystem } from "../types.js";
 
 export interface ListOptions {
   cwd?: string;
   json?: boolean;
 }
+
+const ECOSYSTEM_LABELS: Record<Ecosystem, string> = {
+  npm: "npm",
+  pypi: "PyPI",
+  crates: "crates.io",
+};
 
 /**
  * List all fetched package sources
@@ -12,7 +19,11 @@ export async function listCommand(options: ListOptions = {}): Promise<void> {
   const cwd = options.cwd || process.cwd();
   const sources = await listSources(cwd);
 
-  const totalCount = sources.packages.length + sources.repos.length;
+  const totalPackages = Object.values(sources.packages).reduce(
+    (sum, arr) => sum + arr.length,
+    0,
+  );
+  const totalCount = totalPackages + sources.repos.length;
 
   if (totalCount === 0) {
     console.log("No sources fetched yet.");
@@ -20,6 +31,10 @@ export async function listCommand(options: ListOptions = {}): Promise<void> {
       "\nUse `opensrc <package>` to fetch source code for a package.",
     );
     console.log("Use `opensrc <owner>/<repo>` to fetch a GitHub repository.");
+    console.log("\nSupported ecosystems:");
+    console.log("  • npm:      opensrc zod, opensrc npm:react");
+    console.log("  • PyPI:     opensrc pypi:requests");
+    console.log("  • crates:   opensrc crates:serde");
     return;
   }
 
@@ -28,11 +43,22 @@ export async function listCommand(options: ListOptions = {}): Promise<void> {
     return;
   }
 
-  // Display packages
-  if (sources.packages.length > 0) {
-    console.log("Packages:\n");
+  // Display packages by ecosystem
+  const ecosystems: Ecosystem[] = ["npm", "pypi", "crates"];
+  let hasDisplayedPackages = false;
 
-    for (const source of sources.packages) {
+  for (const ecosystem of ecosystems) {
+    const packages = sources.packages[ecosystem];
+    if (packages.length === 0) continue;
+
+    if (hasDisplayedPackages) {
+      console.log(""); // Add spacing between ecosystems
+    }
+
+    console.log(`${ECOSYSTEM_LABELS[ecosystem]} Packages:\n`);
+    hasDisplayedPackages = true;
+
+    for (const source of packages) {
       const date = new Date(source.fetchedAt);
       const formattedDate = date.toLocaleDateString("en-US", {
         year: "numeric",
@@ -49,7 +75,7 @@ export async function listCommand(options: ListOptions = {}): Promise<void> {
 
   // Display repos
   if (sources.repos.length > 0) {
-    if (sources.packages.length > 0) {
+    if (hasDisplayedPackages) {
       console.log(""); // Add spacing between sections
     }
     console.log("Repositories:\n");
@@ -69,7 +95,21 @@ export async function listCommand(options: ListOptions = {}): Promise<void> {
     }
   }
 
-  console.log(
-    `Total: ${sources.packages.length} package(s), ${sources.repos.length} repo(s)`,
-  );
+  // Summary by ecosystem
+  const packageCounts = ecosystems
+    .map((eco) => {
+      const count = sources.packages[eco].length;
+      return count > 0 ? `${count} ${ECOSYSTEM_LABELS[eco]}` : null;
+    })
+    .filter(Boolean)
+    .join(", ");
+
+  const summary = [
+    packageCounts ? `${totalPackages} package(s) (${packageCounts})` : null,
+    sources.repos.length > 0 ? `${sources.repos.length} repo(s)` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  console.log(`Total: ${summary}`);
 }

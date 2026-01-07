@@ -2,13 +2,16 @@ import { rm } from "fs/promises";
 import { existsSync } from "fs";
 import { getPackagesDir, getReposDir, listSources } from "../lib/git.js";
 import { updateAgentsMd } from "../lib/agents.js";
+import type { Ecosystem } from "../types.js";
 
 export interface CleanOptions {
   cwd?: string;
-  /** Only clean packages */
+  /** Only clean packages (all ecosystems) */
   packages?: boolean;
   /** Only clean repos */
   repos?: boolean;
+  /** Only clean specific ecosystem */
+  ecosystem?: Ecosystem;
 }
 
 /**
@@ -16,8 +19,10 @@ export interface CleanOptions {
  */
 export async function cleanCommand(options: CleanOptions = {}): Promise<void> {
   const cwd = options.cwd || process.cwd();
-  const cleanPackages = options.packages || (!options.packages && !options.repos);
-  const cleanRepos = options.repos || (!options.packages && !options.repos);
+  const cleanPackages =
+    options.packages || (!options.packages && !options.repos);
+  const cleanRepos =
+    options.repos || (!options.packages && !options.repos && !options.ecosystem);
 
   let packagesRemoved = 0;
   let reposRemoved = 0;
@@ -26,13 +31,36 @@ export async function cleanCommand(options: CleanOptions = {}): Promise<void> {
   const sources = await listSources(cwd);
 
   if (cleanPackages) {
-    const packagesDir = getPackagesDir(cwd);
-    if (existsSync(packagesDir)) {
-      packagesRemoved = sources.packages.length;
-      await rm(packagesDir, { recursive: true, force: true });
-      console.log(`✓ Removed ${packagesRemoved} package(s)`);
+    if (options.ecosystem) {
+      // Clean specific ecosystem only
+      const ecosystemDir = getPackagesDir(cwd, options.ecosystem);
+      if (existsSync(ecosystemDir)) {
+        packagesRemoved = sources.packages[options.ecosystem].length;
+        await rm(ecosystemDir, { recursive: true, force: true });
+        console.log(
+          `✓ Removed ${packagesRemoved} ${options.ecosystem} package(s)`,
+        );
+      } else {
+        console.log(`No ${options.ecosystem} packages to remove`);
+      }
     } else {
-      console.log("No packages to remove");
+      // Clean all ecosystems
+      const ecosystems: Ecosystem[] = ["npm", "pypi", "crates"];
+      for (const ecosystem of ecosystems) {
+        const ecosystemDir = getPackagesDir(cwd, ecosystem);
+        if (existsSync(ecosystemDir)) {
+          const count = sources.packages[ecosystem].length;
+          packagesRemoved += count;
+          await rm(ecosystemDir, { recursive: true, force: true });
+          if (count > 0) {
+            console.log(`✓ Removed ${count} ${ecosystem} package(s)`);
+          }
+        }
+      }
+
+      if (packagesRemoved === 0) {
+        console.log("No packages to remove");
+      }
     }
   }
 
@@ -55,7 +83,10 @@ export async function cleanCommand(options: CleanOptions = {}): Promise<void> {
     await updateAgentsMd(remainingSources, cwd);
 
     const totalRemaining =
-      remainingSources.packages.length + remainingSources.repos.length;
+      Object.values(remainingSources.packages).reduce(
+        (sum, arr) => sum + arr.length,
+        0,
+      ) + remainingSources.repos.length;
 
     if (totalRemaining === 0) {
       console.log("✓ Updated sources.json");
@@ -64,4 +95,3 @@ export async function cleanCommand(options: CleanOptions = {}): Promise<void> {
 
   console.log(`\nCleaned ${totalRemoved} source(s)`);
 }
-

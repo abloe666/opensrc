@@ -1,8 +1,8 @@
 import {
+  detectInputType,
   parsePackageSpec,
   resolvePackage,
-  detectInputType,
-} from "../lib/registry.js";
+} from "../lib/registries/index.js";
 import { parseRepoSpec, resolveRepo } from "../lib/repo.js";
 import { detectInstalledVersion } from "../lib/version.js";
 import {
@@ -11,20 +11,20 @@ import {
   packageExists,
   repoExists,
   listSources,
-  readMetadata,
-  readRepoMetadata,
+  getPackageInfo,
+  getRepoInfo,
   getPackageRelativePath,
   getRepoRelativePath,
 } from "../lib/git.js";
 import { ensureGitignore } from "../lib/gitignore.js";
 import { ensureTsconfigExclude } from "../lib/tsconfig.js";
-import { updateAgentsMd } from "../lib/agents.js";
+import { updateAgentsMd, updatePackageIndex } from "../lib/agents.js";
 import {
   getFileModificationPermission,
   setFileModificationPermission,
 } from "../lib/settings.js";
 import { confirm } from "../lib/prompt.js";
-import type { FetchResult } from "../types.js";
+import type { FetchResult, Ecosystem } from "../types.js";
 
 export interface FetchOptions {
   cwd?: string;
@@ -34,18 +34,12 @@ export interface FetchOptions {
 
 /**
  * Check if file modifications are allowed
- * Priority:
- * 1. CLI flag override (--modify / --no-modify)
- * 2. Stored preference in settings.json
- * 3. Prompt user
  */
 async function checkFileModificationPermission(
   cwd: string,
   cliOverride?: boolean,
 ): Promise<boolean> {
-  // CLI flag takes precedence
   if (cliOverride !== undefined) {
-    // Save the preference for future runs
     await setFileModificationPermission(cliOverride, cwd);
     if (cliOverride) {
       console.log("✓ File modifications enabled (--modify)");
@@ -55,13 +49,11 @@ async function checkFileModificationPermission(
     return cliOverride;
   }
 
-  // Check settings file for stored preference
   const storedPermission = await getFileModificationPermission(cwd);
   if (storedPermission !== undefined) {
     return storedPermission;
   }
 
-  // Prompt user for permission
   console.log(
     "\nopensrc can update the following files for better integration:",
   );
@@ -71,7 +63,6 @@ async function checkFileModificationPermission(
 
   const allowed = await confirm("Allow opensrc to modify these files?");
 
-  // Save the preference to settings.json
   await setFileModificationPermission(allowed, cwd);
 
   if (allowed) {
@@ -84,7 +75,21 @@ async function checkFileModificationPermission(
 }
 
 /**
- * Fetch a GitHub repository
+ * Get ecosystem display name
+ */
+function getEcosystemLabel(ecosystem: Ecosystem): string {
+  switch (ecosystem) {
+    case "npm":
+      return "npm";
+    case "pypi":
+      return "PyPI";
+    case "crates":
+      return "crates.io";
+  }
+}
+
+/**
+ * Fetch a git repository
  */
 async function fetchRepoInput(spec: string, cwd: string): Promise<FetchResult> {
   const repoSpec = parseRepoSpec(spec);
@@ -100,27 +105,25 @@ async function fetchRepoInput(spec: string, cwd: string): Promise<FetchResult> {
   }
 
   const displayName = `${repoSpec.host}/${repoSpec.owner}/${repoSpec.repo}`;
-  console.log(`\nFetching ${repoSpec.owner}/${repoSpec.repo} from ${repoSpec.host}...`);
+  console.log(
+    `\nFetching ${repoSpec.owner}/${repoSpec.repo} from ${repoSpec.host}...`,
+  );
 
   try {
     // Check if already exists with the same ref
     if (repoExists(displayName, cwd)) {
-      const existingMeta = await readRepoMetadata(displayName, cwd);
-      if (
-        existingMeta &&
-        repoSpec.ref &&
-        existingMeta.version === repoSpec.ref
-      ) {
+      const existing = await getRepoInfo(displayName, cwd);
+      if (existing && repoSpec.ref && existing.version === repoSpec.ref) {
         console.log(`  ✓ Already up to date (${repoSpec.ref})`);
         return {
           package: displayName,
-          version: existingMeta.version,
+          version: existing.version,
           path: getRepoRelativePath(displayName),
           success: true,
         };
-      } else if (existingMeta) {
+      } else if (existing) {
         console.log(
-          `  → Updating ${existingMeta.version} → ${repoSpec.ref || "default branch"}`,
+          `  → Updating ${existing.version} → ${repoSpec.ref || "default branch"}`,
         );
       }
     }
@@ -159,22 +162,22 @@ async function fetchRepoInput(spec: string, cwd: string): Promise<FetchResult> {
 }
 
 /**
- * Fetch an npm package
+ * Fetch a package from any ecosystem
  */
 async function fetchPackageInput(
   spec: string,
   cwd: string,
 ): Promise<FetchResult> {
-  const { name, version: explicitVersion } = parsePackageSpec(spec);
+  const packageSpec = parsePackageSpec(spec);
+  const { ecosystem, name } = packageSpec;
+  let { version } = packageSpec;
 
-  console.log(`\nFetching ${name}...`);
+  const ecosystemLabel = getEcosystemLabel(ecosystem);
+  console.log(`\nFetching ${name} from ${ecosystemLabel}...`);
 
   try {
-    // Determine target version
-    let version = explicitVersion;
-
-    if (!version) {
-      // Try to detect from installed packages
+    // For npm, try to detect installed version if not specified
+    if (!version && ecosystem === "npm") {
       const installedVersion = await detectInstalledVersion(name, cwd);
       if (installedVersion) {
         version = installedVersion;
@@ -182,34 +185,38 @@ async function fetchPackageInput(
       } else {
         console.log(`  → No installed version found, using latest`);
       }
+    } else if (!version) {
+      console.log(`  → Using latest version`);
     } else {
       console.log(`  → Using specified version: ${version}`);
     }
 
     // Check if already exists with the same version
-    if (packageExists(name, cwd)) {
-      const existingMeta = await readMetadata(name, cwd);
-      if (existingMeta && existingMeta.version === version) {
+    if (packageExists(name, cwd, ecosystem)) {
+      const existing = await getPackageInfo(name, cwd, ecosystem);
+      if (existing && existing.version === version) {
         console.log(`  ✓ Already up to date (${version})`);
-        const relativePath = existingMeta.repoDirectory
-          ? `${getPackageRelativePath(name)}/${existingMeta.repoDirectory}`
-          : getPackageRelativePath(name);
         return {
           package: name,
-          version: existingMeta.version,
-          path: relativePath,
+          version: existing.version,
+          path: existing.path,
           success: true,
+          ecosystem,
         };
-      } else if (existingMeta) {
+      } else if (existing) {
         console.log(
-          `  → Updating ${existingMeta.version} → ${version || "latest"}`,
+          `  → Updating ${existing.version} → ${version || "latest"}`,
         );
       }
     }
 
-    // Resolve package info from npm registry
+    // Resolve package info from registry
     console.log(`  → Resolving repository...`);
-    const resolved = await resolvePackage(name, version);
+    const resolved = await resolvePackage({
+      ecosystem,
+      name,
+      version,
+    });
     console.log(`  → Found: ${resolved.repoUrl}`);
 
     if (resolved.repoDirectory) {
@@ -223,7 +230,6 @@ async function fetchPackageInput(
     if (result.success) {
       console.log(`  ✓ Saved to opensrc/${result.path}`);
       if (result.error) {
-        // Warning message (e.g., tag not found)
         console.log(`  ⚠ ${result.error}`);
       }
     } else {
@@ -240,8 +246,67 @@ async function fetchPackageInput(
       path: "",
       success: false,
       error: errorMessage,
+      ecosystem,
     };
   }
+}
+
+/**
+ * Merge new results into existing sources
+ */
+function mergeResults(
+  existing: {
+    packages: Record<Ecosystem, Array<{ name: string; version: string; path: string; fetchedAt: string; ecosystem: Ecosystem }>>;
+    repos: Array<{ name: string; version: string; path: string; fetchedAt: string }>;
+  },
+  results: FetchResult[],
+): {
+  packages: Record<Ecosystem, Array<{ name: string; version: string; path: string; fetchedAt: string; ecosystem: Ecosystem }>>;
+  repos: Array<{ name: string; version: string; path: string; fetchedAt: string }>;
+} {
+  const now = new Date().toISOString();
+
+  for (const result of results) {
+    if (!result.success) continue;
+
+    if (result.ecosystem) {
+      // It's a package
+      const ecosystem = result.ecosystem;
+      const idx = existing.packages[ecosystem].findIndex(
+        (p) => p.name === result.package,
+      );
+      const entry = {
+        name: result.package,
+        version: result.version,
+        path: result.path,
+        fetchedAt: now,
+        ecosystem,
+      };
+
+      if (idx >= 0) {
+        existing.packages[ecosystem][idx] = entry;
+      } else {
+        existing.packages[ecosystem].push(entry);
+      }
+    } else {
+      // It's a repo
+      const idx = existing.repos.findIndex((r) => r.name === result.package);
+      const entry = {
+        name: result.package,
+        version: result.version,
+        path: result.path,
+        fetchedAt: now,
+      };
+
+      if (idx >= 0) {
+        existing.repos[idx] = entry;
+      } else {
+        existing.repos.push(entry);
+      }
+    }
+  }
+
+  return existing;
 }
 
 /**
@@ -261,13 +326,11 @@ export async function fetchCommand(
   );
 
   if (canModifyFiles) {
-    // Ensure .gitignore has opensrc/ entry
     const gitignoreUpdated = await ensureGitignore(cwd);
     if (gitignoreUpdated) {
       console.log("✓ Added opensrc/ to .gitignore");
     }
 
-    // Ensure tsconfig.json excludes opensrc/
     const tsconfigUpdated = await ensureTsconfigExclude(cwd);
     if (tsconfigUpdated) {
       console.log("✓ Added opensrc/ to tsconfig.json exclude");
@@ -278,11 +341,9 @@ export async function fetchCommand(
     const inputType = detectInputType(spec);
 
     if (inputType === "repo") {
-      // Handle GitHub repository
       const result = await fetchRepoInput(spec, cwd);
       results.push(result);
     } else {
-      // Handle npm package
       const result = await fetchPackageInput(spec, cwd);
       results.push(result);
     }
@@ -294,18 +355,19 @@ export async function fetchCommand(
 
   console.log(`\nDone: ${successful} succeeded, ${failed} failed`);
 
-  // Update AGENTS.md with all fetched sources (only if permission granted)
-  if (successful > 0 && canModifyFiles) {
-    const allSources = await listSources(cwd);
-    const agentsUpdated = await updateAgentsMd(allSources, cwd);
-    if (agentsUpdated) {
-      console.log("✓ Updated AGENTS.md");
+  // Update sources.json with all fetched sources
+  if (successful > 0) {
+    const existingSources = await listSources(cwd);
+    const mergedSources = mergeResults(existingSources, results);
+
+    if (canModifyFiles) {
+      const agentsUpdated = await updateAgentsMd(mergedSources, cwd);
+      if (agentsUpdated) {
+        console.log("✓ Updated AGENTS.md");
+      }
+    } else {
+      await updatePackageIndex(mergedSources, cwd);
     }
-  } else if (successful > 0 && !canModifyFiles) {
-    // Still update the sources.json index even without modifying AGENTS.md
-    const allSources = await listSources(cwd);
-    const { updatePackageIndex } = await import("../lib/agents.js");
-    await updatePackageIndex(allSources, cwd);
   }
 
   return results;

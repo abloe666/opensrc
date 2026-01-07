@@ -1,3 +1,8 @@
+/**
+ * Supported package ecosystems
+ */
+export type Ecosystem = "npm" | "pypi" | "crates";
+
 export interface PackageInfo {
   name: string;
   version: string;
@@ -25,6 +30,7 @@ export interface RegistryResponse {
 }
 
 export interface ResolvedPackage {
+  ecosystem: Ecosystem;
   name: string;
   version: string;
   repoUrl: string;
@@ -38,6 +44,7 @@ export interface FetchResult {
   path: string;
   success: boolean;
   error?: string;
+  ecosystem?: Ecosystem;
 }
 
 export interface InstalledPackage {
@@ -56,9 +63,18 @@ export interface RepoSpec {
 }
 
 /**
- * Type of input: npm package or GitHub repo
+ * Type of input: package (with ecosystem) or git repo
  */
 export type InputType = "package" | "repo";
+
+/**
+ * Parsed package specification with ecosystem
+ */
+export interface PackageSpec {
+  ecosystem: Ecosystem;
+  name: string;
+  version?: string;
+}
 
 /**
  * Resolved repository information (for git repos)
