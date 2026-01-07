@@ -11,10 +11,10 @@ const SECTION_MARKER = "<!-- opensrc:start -->";
 const SECTION_END_MARKER = "<!-- opensrc:end -->";
 
 /**
- * The static AGENTS.md section that points to the index file
+ * Get the section content (without leading newline for comparison)
  */
-const STATIC_SECTION = `
-${SECTION_MARKER}
+function getSectionContent(): string {
+  return `${SECTION_MARKER}
 
 ${SECTION_START}
 
@@ -29,14 +29,14 @@ Use this source code when you need to understand how a package works internally,
 To fetch source code for a package or repository you need to understand, run:
 
 \`\`\`bash
-opensrc <package>           # npm package (e.g., opensrc zod)
-opensrc pypi:<package>      # Python package (e.g., opensrc pypi:requests)
-opensrc crates:<package>    # Rust crate (e.g., opensrc crates:serde)
-opensrc <owner>/<repo>      # GitHub repo (e.g., opensrc vercel/ai)
+npx opensrc <package>           # npm package (e.g., npx opensrc zod)
+npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
+npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
+npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
 \`\`\`
 
-${SECTION_END_MARKER}
-`;
+${SECTION_END_MARKER}`;
+}
 
 export interface SourceEntry {
   name: string;
@@ -156,38 +156,71 @@ export async function hasOpensrcSection(
 }
 
 /**
- * Ensure AGENTS.md has the static opensrc section
+ * Extract the current opensrc section from a file
+ */
+function extractSection(content: string): string | null {
+  const startIdx = content.indexOf(SECTION_MARKER);
+  const endIdx = content.indexOf(SECTION_END_MARKER);
+
+  if (startIdx === -1 || endIdx === -1) {
+    return null;
+  }
+
+  return content.slice(startIdx, endIdx + SECTION_END_MARKER.length);
+}
+
+/**
+ * Ensure AGENTS.md has the opensrc section (add or update)
  */
 export async function ensureAgentsMd(
   cwd: string = process.cwd(),
 ): Promise<boolean> {
   const agentsPath = join(cwd, AGENTS_FILE);
-
-  // Already has section
-  if (await hasOpensrcSection(cwd)) {
-    return false;
-  }
-
-  let content = "";
+  const newSection = getSectionContent();
 
   if (existsSync(agentsPath)) {
-    content = await readFile(agentsPath, "utf-8");
-    // Ensure there's a newline at the end before we append
-    if (content.length > 0 && !content.endsWith("\n")) {
-      content += "\n";
+    const content = await readFile(agentsPath, "utf-8");
+
+    if (content.includes(SECTION_MARKER)) {
+      // Section exists - check if it needs updating
+      const existingSection = extractSection(content);
+
+      if (existingSection === newSection) {
+        // Content is the same, no update needed
+        return false;
+      }
+
+      // Update the existing section
+      const startIdx = content.indexOf(SECTION_MARKER);
+      const endIdx = content.indexOf(SECTION_END_MARKER);
+
+      const before = content.slice(0, startIdx);
+      const after = content.slice(endIdx + SECTION_END_MARKER.length);
+
+      const newContent = before + newSection + after;
+      await writeFile(agentsPath, newContent, "utf-8");
+      return true;
+    } else {
+      // Section doesn't exist - add it
+      let newContent = content;
+      if (newContent.length > 0 && !newContent.endsWith("\n")) {
+        newContent += "\n";
+      }
+      newContent += "\n" + newSection;
+      await writeFile(agentsPath, newContent, "utf-8");
+      return true;
     }
   } else {
     // Create new file
-    content = `# AGENTS.md
+    const content = `# AGENTS.md
 
 Instructions for AI coding agents working with this codebase.
+
+${newSection}
 `;
+    await writeFile(agentsPath, content, "utf-8");
+    return true;
   }
-
-  content += STATIC_SECTION;
-
-  await writeFile(agentsPath, content, "utf-8");
-  return true;
 }
 
 /**
@@ -203,7 +236,7 @@ export async function updateAgentsMd(
   // Always update the index file
   await updatePackageIndex(sources, cwd);
 
-  // Only add section to AGENTS.md if there are sources and section doesn't exist
+  // Add or update section in AGENTS.md if there are sources
   const totalPackages = Object.values(sources.packages).reduce(
     (sum, arr) => sum + arr.length,
     0,
